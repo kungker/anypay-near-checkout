@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="AnyPay — a universal checkout widget for NEAR. Buyers pay with any asset on any chain; NEAR Intents settles the merchant in USDC on NEAR. Built at NEAR HACKATHON.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23111'/><text x='50' y='70' font-size='60' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='bold'>A</text></svg>">
 <title>AnyPay — Universal Checkout for NEAR</title>
 <style>
   :root { --ink:#111; --mut:#5c665f; --acc:#00c08b; --bg:#f4f6f4; --card:#fff; --line:#e3e8e3; }
@@ -72,9 +74,10 @@
 
       <label for="refund">Your refund address (on the chain you pay from)</label>
       <input id="refund" type="text" value="0x1111111111111111111111111111111111111111">
+      <p class="note" style="margin-top:5px">Prefilled with an example in the right format for the selected chain — in production this is the buyer's own address, used only if an intent expires unfilled.</p>
 
       <label for="recipient">Merchant receives USDC at (NEAR account)</label>
-      <input id="recipient" type="text" value="merchant.near">
+      <input id="recipient" type="text" value="biggals.near">
 
       <button id="go">Get live quote</button>
       <div class="err" id="err"></div>
@@ -105,6 +108,25 @@ const $ = id => document.getElementById(id);
 let tokens = [], destAsset = null;
 let TOKENS_URL = "/api/tokens", QUOTE_URL = "/api/quote";
 
+// The 1Click API validates the refund address format per chain, so the demo
+// prefills a verified-format example per chain family (checked live 2026-11-15).
+const EVM_REFUND = "0x1111111111111111111111111111111111111111";
+const HEX64_REFUND = "0x0000000000000000000000000000000000000000000000000000000000000001";
+const REFUND_BY_CHAIN = {
+  near: "buyer.near",
+  sol: "4wBqpZM9xaSheZzJSMawUKKwhdpChKbZ5eu5ky4Vigw",
+  btc: "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+  sui: HEX64_REFUND, aptos: HEX64_REFUND, movement: HEX64_REFUND
+};
+let refundEdited = false;
+$("refund").addEventListener("input", () => { refundEdited = true; });
+function syncRefund() {
+  if (refundEdited) return;
+  const t = tokens.find(x => x.assetId === $("asset").value);
+  if (t) $("refund").value = REFUND_BY_CHAIN[t.blockchain] || EVM_REFUND;
+}
+$("asset").addEventListener("change", syncRefund);
+
 function toSmallest(amountStr, decimals) {
   const [i, f = ""] = String(amountStr).trim().split(".");
   const frac = (f + "0".repeat(decimals)).slice(0, decimals);
@@ -116,23 +138,32 @@ function fmt(units, decimals) {
   return f ? i + "." + f : i;
 }
 
+async function fetchTokens(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  const data = await res.json();
+  if (!Array.isArray(data) || !data.length) throw new Error("unexpected token list response");
+  return data;
+}
+
 async function loadTokens() {
-  let res;
   try {
-    res = await fetch(TOKENS_URL);
-    if (!res.ok) throw new Error("proxy unavailable");
+    tokens = await fetchTokens(TOKENS_URL);
   } catch (e) {
-    // Static hosting (e.g. GitHub Pages): call the 1Click API directly — it serves CORS *.
+    // Static hosting (e.g. GitHub Pages) has no proxy: call the 1Click API
+    // directly — it serves Access-Control-Allow-Origin: *.
     TOKENS_URL = "https://1click.chaindefuser.com/v0/tokens";
     QUOTE_URL = "https://1click.chaindefuser.com/v0/quote";
-    res = await fetch(TOKENS_URL);
+    tokens = await fetchTokens(TOKENS_URL);
   }
-  tokens = await res.json();
   destAsset = tokens.find(t => t.blockchain === "near" && t.symbol === "USDC");
   const sel = $("asset");
   sel.innerHTML = "";
   const byChain = {};
-  tokens.forEach(t => { (byChain[t.blockchain] = byChain[t.blockchain] || []).push(t); });
+  tokens.forEach(t => {
+    if (destAsset && t.assetId === destAsset.assetId) return; // paying USDC-on-NEAR to receive USDC-on-NEAR is not a checkout
+    (byChain[t.blockchain] = byChain[t.blockchain] || []).push(t);
+  });
   Object.keys(byChain).sort().forEach(chain => {
     const g = document.createElement("optgroup");
     g.label = chain.toUpperCase();
@@ -146,6 +177,7 @@ async function loadTokens() {
   });
   const baseEth = tokens.find(t => t.blockchain === "base" && t.symbol === "ETH");
   if (baseEth) sel.value = baseEth.assetId;
+  syncRefund();
 }
 
 async function quote() {
@@ -153,13 +185,16 @@ async function quote() {
   $("result").style.display = "none";
   const t = tokens.find(x => x.assetId === $("asset").value);
   if (!t || !destAsset) { $("err").textContent = "Asset list not loaded yet."; return; }
-  const amt = $("amount").value.trim();
-  if (!amt || Number(amt) <= 0) { $("err").textContent = "Enter an amount greater than zero."; return; }
+  const amt = $("amount").value.trim().replace(",", ".");
+  if (!/^\d+(\.\d+)?$/.test(amt) || Number(amt) <= 0) { $("err").textContent = "Enter an amount greater than zero, e.g. 0.01"; return; }
+  let amountSmallest;
+  try { amountSmallest = toSmallest(amt, t.decimals); }
+  catch (e) { $("err").textContent = "That amount could not be parsed."; return; }
   const body = {
     dry: true, swapType: "EXACT_INPUT", slippageTolerance: 100,
     originAsset: t.assetId, depositType: "ORIGIN_CHAIN",
     destinationAsset: destAsset.assetId,
-    amount: toSmallest(amt, t.decimals),
+    amount: amountSmallest,
     refundTo: $("refund").value.trim(), refundType: "ORIGIN_CHAIN",
     recipient: $("recipient").value.trim(), recipientType: "DESTINATION_CHAIN",
     deadline: new Date(Date.now() + 10 * 60000).toISOString()
@@ -170,10 +205,12 @@ async function quote() {
     const data = await res.json();
     if (!res.ok || !data.quote) throw new Error(data.message || ("HTTP " + res.status));
     const q = data.quote;
-    $("rIn").textContent = q.amountInFormatted + " " + t.symbol + "  (≈ $" + Number(q.amountInUsd).toFixed(2) + ")";
-    $("rOut").textContent = q.amountOutFormatted + " USDC  (≈ $" + Number(q.amountOutUsd).toFixed(2) + ")";
-    $("rMin").textContent = fmt(q.minAmountOut, destAsset.decimals) + " USDC";
-    $("rTime").textContent = "~" + q.timeEstimate + " seconds";
+    const inFmt = q.amountInFormatted || fmt(q.amountIn, t.decimals);
+    const outFmt = q.amountOutFormatted || fmt(q.amountOut, destAsset.decimals);
+    $("rIn").textContent = inFmt + " " + t.symbol + (q.amountInUsd ? "  (≈ $" + Number(q.amountInUsd).toFixed(2) + ")" : "");
+    $("rOut").textContent = outFmt + " USDC" + (q.amountOutUsd ? "  (≈ $" + Number(q.amountOutUsd).toFixed(2) + ")" : "");
+    $("rMin").textContent = q.minAmountOut ? fmt(q.minAmountOut, destAsset.decimals) + " USDC" : "—";
+    $("rTime").textContent = q.timeEstimate ? "~" + q.timeEstimate + " seconds" : "—";
     $("rNote").textContent = "Live quote fetched " + new Date().toLocaleTimeString() +
       ". In production the buyer would now receive a one-time deposit address for " + t.symbol +
       " on " + t.blockchain + "; this demo runs dry quotes only, so nothing can be sent or lost.";
