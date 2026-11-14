@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnyPay — Universal Checkout for NEAR</title>
+<style>
+  :root { --ink:#111; --mut:#5c665f; --acc:#00c08b; --bg:#f4f6f4; --card:#fff; --line:#e3e8e3; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background:var(--bg); color:var(--ink); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 28px 18px 60px; }
+  header { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  .logo { width:40px; height:40px; border-radius:10px; background:#111; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:20px; }
+  h1 { font-size:26px; margin:0; }
+  .tag { color:var(--mut); margin:2px 0 22px; font-size:15px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  @media (max-width: 720px){ .grid{ grid-template-columns:1fr; } }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; }
+  .card h2 { font-size:15px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.06em; color:var(--mut); }
+  .item { display:flex; gap:12px; align-items:center; }
+  .thumb { width:56px; height:56px; border-radius:10px; background:linear-gradient(135deg,#111,#3a4a3f); color:#fff; display:flex; align-items:center; justify-content:center; font-size:22px; }
+  .price { font-size:22px; font-weight:700; margin-top:6px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:12px 0 5px; }
+  select, input { width:100%; padding:10px 11px; border:1px solid var(--line); border-radius:9px; font-size:15px; background:#fff; }
+  button { width:100%; margin-top:16px; padding:12px; border:0; border-radius:10px; background:var(--acc); color:#fff; font-size:16px; font-weight:700; cursor:pointer; }
+  button:disabled { opacity:.55; cursor:wait; }
+  .row { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px dashed var(--line); font-size:15px; }
+  .row:last-child { border-bottom:0; }
+  .row b { font-variant-numeric: tabular-nums; }
+  .big { font-size:20px; font-weight:800; }
+  .note { font-size:13px; color:var(--mut); line-height:1.5; }
+  .err { color:#b3261e; font-size:14px; margin-top:10px; white-space:pre-wrap; }
+  .ok-badge { display:inline-block; background:#e6f7f1; color:#067a57; border:1px solid #bfe9d8; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; }
+  footer { margin-top:26px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">A</div>
+    <div>
+      <h1>AnyPay Checkout</h1>
+      <div class="tag">Pay with any asset, on any chain. The merchant receives USDC on NEAR. Powered by NEAR Intents.</div>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Merchant demo store</h2>
+      <div class="item">
+        <div class="thumb">◧</div>
+        <div>
+          <div><b>Indie game art pack — “Forest Spirits”</b></div>
+          <div class="note">Digital download · sold by a creator whose only wallet is on NEAR</div>
+          <div class="price">$17.38</div>
+        </div>
+      </div>
+      <p class="note" style="margin-top:14px">The buyer does not need NEAR, a NEAR wallet, or a bridge.
+      They pay with what they already hold; NEAR Intents solvers settle the merchant in USDC on NEAR.</p>
+      <p><span class="ok-badge">DEMO MODE</span></p>
+      <p class="note">Quotes are live production quotes from the NEAR Intents (1Click) API with
+      <code>dry: true</code> — real prices, real routes, but no deposit address is issued and no funds move.</p>
+    </div>
+
+    <div class="card">
+      <h2>Pay with what you have</h2>
+      <label for="asset">You pay with</label>
+      <select id="asset"><option>Loading live asset list…</option></select>
+
+      <label for="amount">Amount</label>
+      <input id="amount" type="text" inputmode="decimal" value="0.01">
+
+      <label for="refund">Your refund address (on the chain you pay from)</label>
+      <input id="refund" type="text" value="0x1111111111111111111111111111111111111111">
+
+      <label for="recipient">Merchant receives USDC at (NEAR account)</label>
+      <input id="recipient" type="text" value="merchant.near">
+
+      <button id="go">Get live quote</button>
+      <div class="err" id="err"></div>
+
+      <div id="result" style="display:none; margin-top:14px">
+        <div class="row"><span>You pay</span><b id="rIn"></b></div>
+        <div class="row"><span>Merchant receives</span><b class="big" id="rOut"></b></div>
+        <div class="row"><span>Minimum received</span><b id="rMin"></b></div>
+        <div class="row"><span>Estimated settlement time</span><b id="rTime"></b></div>
+        <div class="row"><span>Route</span><b>NEAR Intents · 1Click</b></div>
+        <p class="note" id="rNote" style="margin-top:10px"></p>
+      </div>
+    </div>
+  </div>
+
+  <footer class="card">
+    <h2>How settlement works</h2>
+    <p class="note">1. AnyPay asks NEAR Intents for a quote: your asset on your chain → USDC on NEAR.<br>
+    2. In production, the API returns a one-time deposit address. You send your asset there — no wallet connection, no signing inside AnyPay.<br>
+    3. Solvers compete to fill the intent; the merchant's NEAR account receives USDC, typically in under a minute.<br>
+    4. If anything goes wrong before the deadline, the deposit is refunded to your refund address.</p>
+    <p class="note">Built at NEAR HACKATHON, November 2026. Source: this repository. Run it yourself: <code>node server.js</code>, then open <code>http://localhost:8080</code>.</p>
+  </footer>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let tokens = [], destAsset = null;
+let TOKENS_URL = "/api/tokens", QUOTE_URL = "/api/quote";
+
+function toSmallest(amountStr, decimals) {
+  const [i, f = ""] = String(amountStr).trim().split(".");
+  const frac = (f + "0".repeat(decimals)).slice(0, decimals);
+  return (BigInt(i || "0") * (10n ** BigInt(decimals)) + BigInt(frac || "0")).toString();
+}
+function fmt(units, decimals) {
+  const s = String(units).padStart(decimals + 1, "0");
+  const i = s.slice(0, s.length - decimals), f = s.slice(s.length - decimals).replace(/0+$/, "");
+  return f ? i + "." + f : i;
+}
+
+async function loadTokens() {
+  let res;
+  try {
+    res = await fetch(TOKENS_URL);
+    if (!res.ok) throw new Error("proxy unavailable");
+  } catch (e) {
+    // Static hosting (e.g. GitHub Pages): call the 1Click API directly — it serves CORS *.
+    TOKENS_URL = "https://1click.chaindefuser.com/v0/tokens";
+    QUOTE_URL = "https://1click.chaindefuser.com/v0/quote";
+    res = await fetch(TOKENS_URL);
+  }
+  tokens = await res.json();
+  destAsset = tokens.find(t => t.blockchain === "near" && t.symbol === "USDC");
+  const sel = $("asset");
+  sel.innerHTML = "";
+  const byChain = {};
+  tokens.forEach(t => { (byChain[t.blockchain] = byChain[t.blockchain] || []).push(t); });
+  Object.keys(byChain).sort().forEach(chain => {
+    const g = document.createElement("optgroup");
+    g.label = chain.toUpperCase();
+    byChain[chain].sort((a, b) => a.symbol.localeCompare(b.symbol)).forEach(t => {
+      const o = document.createElement("option");
+      o.value = t.assetId;
+      o.textContent = t.symbol + " — " + chain + (t.price ? "  ($" + t.price + ")" : "");
+      g.appendChild(o);
+    });
+    sel.appendChild(g);
+  });
+  const baseEth = tokens.find(t => t.blockchain === "base" && t.symbol === "ETH");
+  if (baseEth) sel.value = baseEth.assetId;
+}
+
+async function quote() {
+  $("err").textContent = "";
+  $("result").style.display = "none";
+  const t = tokens.find(x => x.assetId === $("asset").value);
+  if (!t || !destAsset) { $("err").textContent = "Asset list not loaded yet."; return; }
+  const amt = $("amount").value.trim();
+  if (!amt || Number(amt) <= 0) { $("err").textContent = "Enter an amount greater than zero."; return; }
+  const body = {
+    dry: true, swapType: "EXACT_INPUT", slippageTolerance: 100,
+    originAsset: t.assetId, depositType: "ORIGIN_CHAIN",
+    destinationAsset: destAsset.assetId,
+    amount: toSmallest(amt, t.decimals),
+    refundTo: $("refund").value.trim(), refundType: "ORIGIN_CHAIN",
+    recipient: $("recipient").value.trim(), recipientType: "DESTINATION_CHAIN",
+    deadline: new Date(Date.now() + 10 * 60000).toISOString()
+  };
+  $("go").disabled = true; $("go").textContent = "Fetching live quote…";
+  try {
+    const res = await fetch(QUOTE_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok || !data.quote) throw new Error(data.message || ("HTTP " + res.status));
+    const q = data.quote;
+    $("rIn").textContent = q.amountInFormatted + " " + t.symbol + "  (≈ $" + Number(q.amountInUsd).toFixed(2) + ")";
+    $("rOut").textContent = q.amountOutFormatted + " USDC  (≈ $" + Number(q.amountOutUsd).toFixed(2) + ")";
+    $("rMin").textContent = fmt(q.minAmountOut, destAsset.decimals) + " USDC";
+    $("rTime").textContent = "~" + q.timeEstimate + " seconds";
+    $("rNote").textContent = "Live quote fetched " + new Date().toLocaleTimeString() +
+      ". In production the buyer would now receive a one-time deposit address for " + t.symbol +
+      " on " + t.blockchain + "; this demo runs dry quotes only, so nothing can be sent or lost.";
+    $("result").style.display = "block";
+  } catch (e) {
+    $("err").textContent = "Quote failed: " + e.message;
+  } finally {
+    $("go").disabled = false; $("go").textContent = "Get live quote";
+  }
+}
+
+$("go").addEventListener("click", quote);
+loadTokens().catch(e => { $("err").textContent = "Could not load the live asset list: " + e.message; });
+</script>
+</body>
+</html>

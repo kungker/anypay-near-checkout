@@ -1,0 +1,12 @@
+{
+  "name": "anypay-near-checkout",
+  "version": "1.0.0",
+  "description": "Universal checkout widget: pay with any asset on any chain, merchant receives USDC on NEAR. Powered by NEAR Intents (1Click API).",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  }
+}
